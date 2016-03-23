@@ -11,15 +11,38 @@
 #define LED_S2_GREEN A4
 #define LED_S2_RED A5
 
+#define MAX_SENSORS 2
+
+/////////
+
+typedef struct {
+  unsigned long messageReceivedTime;
+  unsigned long messageReceivedCounter;
+  bool messageReceivedState;
+} LedStatus;
+
+typedef struct {
+  uint8_t address[5];
+  int minValue;
+  int maxValue;
+  LedStatus ledStatus;
+} SensorNode;
+
+//////////
+
+void setMessageReceived(SensorNode &sensor);
+void processLeds(unsigned long totalTime);
+void processLedMessageReceived(unsigned long totalTime);
+
+//////////
+
 RF24 radio(7, 8);
 
-uint32_t displayTimer = 0;
-
 uint8_t gatewayAddress[] = { 0x00, 0xA1, 0xB2, 0xC3, 0xD4 };
-uint8_t nodeAddress[] = { 0x01, 0xA1, 0xB2, 0xC3, 0xD4 };
-byte counter = 1;
 
 byte buffer[32];
+
+SensorNode sensorNodes[MAX_SENSORS];
 
 void setup() {
   Serial.begin(115200);
@@ -37,20 +60,15 @@ void setup() {
   radio.enableDynamicPayloads();
   radio.setDataRate(RF24_250KBPS);
   radio.setPALevel(RF24_PA_HIGH);
+  radio.setAutoAck(true);
 
-  //radio.openWritingPipe(nodeAddress);
   radio.openReadingPipe(1, gatewayAddress);
   radio.startListening();
 
-  radio.printDetails();
+  //radio.printDetails();
 }
 
 void loop() {
-
-  //analogWrite(LED_S2_RED, 255);
-  //analogWrite(LED_S2_GREEN, 255);
-  //analogWrite(LED_S2_BLUE, 255);
-
   byte pipeNo;
   while(radio.available(&pipeNo)) {
     int payloadSize = radio.getDynamicPayloadSize();
@@ -61,10 +79,47 @@ void loop() {
     radio.read( &buffer, sizeof(buffer) );
 
     Serial.print(F("Got value "));
-    Serial.println(buffer[0]);
+    Serial.println(buffer[0]); // TODO
 
-    analogWrite(LED_S1_BLUE, 255);
-    delay(50);
-    analogWrite(LED_S1_BLUE, 0);
+    setMessageReceived(sensorNodes[0]);
  }
+
+ const unsigned long totalTime = millis();
+ processLeds(totalTime);
+}
+
+void processLeds(unsigned long totalTime) {
+
+  processLedMessageReceived(totalTime);
+}
+
+void processLedMessageReceived(unsigned long totalTime) {
+  for(unsigned int i = 0; i < MAX_SENSORS; i++) {
+    if(sensorNodes[i].ledStatus.messageReceivedCounter > 0) {
+      unsigned long cycleTime = totalTime - sensorNodes[i].ledStatus.messageReceivedTime;
+
+      if (cycleTime < 100) {
+        digitalWrite(LED_S1_BLUE, HIGH);
+        sensorNodes[i].ledStatus.messageReceivedState = true;
+      }
+      else if(sensorNodes[i].ledStatus.messageReceivedState) {
+        digitalWrite(LED_S1_BLUE, LOW);
+        sensorNodes[i].ledStatus.messageReceivedCounter -= 1;
+        sensorNodes[i].ledStatus.messageReceivedState = false;
+        sensorNodes[i].ledStatus.messageReceivedTime = totalTime + 100;
+      }
+    }
+  }
+}
+
+void setMessageReceived(SensorNode &sensor) {
+  sensor.ledStatus.messageReceivedTime = millis();
+  sensor.ledStatus.messageReceivedCounter = 5;
+  sensor.ledStatus.messageReceivedState = false;
+}
+
+void setColor(int red, int green, int blue) {
+  analogWrite(LED_S1_RED, red);
+  analogWrite(LED_S1_GREEN, green);
+  analogWrite(LED_S1_BLUE, blue);
 }
