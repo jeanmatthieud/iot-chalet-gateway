@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <math.h>
 
+#include <printf.h>
+
 #include <RF24.h>
 #include <SPI.h>
 
@@ -17,6 +19,8 @@
 #define LED_MSG_RECEIVED_BLINK_COUNT 3
 #define LED_POWER_COEFF 0.1f
 
+#define PAYLOAD_SIZE 3
+
 /////////
 
 typedef struct {
@@ -27,7 +31,7 @@ typedef struct {
 } LedStatus;
 
 typedef struct {
-  uint8_t address[5];
+  uint8_t address;
   int currentValue;
   int minValue;
   int maxValue;
@@ -35,6 +39,11 @@ typedef struct {
   int pinRed;
   int pinGreen;
 } SensorNode;
+
+typedef struct {
+  uint8_t address;
+  unsigned short value;
+} Message;
 
 //////////
 
@@ -56,6 +65,7 @@ SensorNode sensorNodes[MAX_SENSORS];
 
 void setup() {
   Serial.begin(115200);
+  printf_begin();
 
   // Analog output
   pinMode(LED_S1_RED, OUTPUT);
@@ -67,7 +77,8 @@ void setup() {
 
   // Setup and configure radio
   radio.begin();
-  radio.enableDynamicPayloads();
+  //radio.enableDynamicPayloads();
+  radio.setPayloadSize(PAYLOAD_SIZE);
   radio.setDataRate(RF24_250KBPS);
   radio.setPALevel(RF24_PA_HIGH);
   radio.setAutoAck(true);
@@ -75,13 +86,13 @@ void setup() {
   radio.openReadingPipe(1, gatewayAddress);
   radio.startListening();
 
-  //radio.printDetails();
+  radio.printDetails();
 
   sensorNodes[0].ledStatus.pin = LED_S1_BLUE;
   sensorNodes[0].pinRed = LED_S1_RED;
   sensorNodes[0].pinGreen = LED_S1_GREEN;
   sensorNodes[1].ledStatus.pin = LED_S2_BLUE;
-  sensorNodes[1].pinRed = LED_S1_RED;
+  sensorNodes[1].pinRed = LED_S2_RED;
   sensorNodes[1].pinGreen = LED_S2_GREEN;
 }
 
@@ -95,9 +106,19 @@ void loop() {
     }
     radio.read( &buffer, sizeof(buffer) );
 
-    // TODO : gérer l'adressage et le buffer
-    saveValue(sensorNodes[0], buffer[0]);
-    setMessageReceived(sensorNodes[0]);
+    Message msg;
+    msg = *(Message *)buffer;
+
+    SensorNode* pSensorNode = NULL;
+    if(msg.address == 0x01) {
+      pSensorNode = &sensorNodes[0];
+    } else if(msg.address == 0x02) {
+      pSensorNode = &sensorNodes[1];
+    } else {
+      Serial.println("Address not known !!");
+    }
+    saveValue(*pSensorNode, msg.value);
+    setMessageReceived(*pSensorNode);
   }
 
   const unsigned long currentTime = millis();
