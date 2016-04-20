@@ -6,19 +6,28 @@
 #include <RF24.h>
 #include <SPI.h>
 
+// - Pins of the first RGB LED
 #define LED_S1_BLUE A0
 #define LED_S1_GREEN 5
 #define LED_S1_RED 6
 
+// - Pins of the second RGB LED
 #define LED_S2_BLUE A1
 #define LED_S2_GREEN 9
 #define LED_S2_RED 10
 
+//////////
+
+// - Number of sensors
 #define MAX_SENSORS 2
+
+// - Delay and blink count for the flashing led (message received)
 #define LED_MSG_RECEIVED_BLINK_DELAY 75
 #define LED_MSG_RECEIVED_BLINK_COUNT 3
+// - Power coefficient for LEDS
 #define LED_POWER_COEFF 0.1f
 
+// - RF messages payload size
 #define PAYLOAD_SIZE 3
 
 /////////
@@ -67,7 +76,7 @@ void setup() {
   Serial.begin(115200);
   printf_begin();
 
-  // Analog output
+  // - Analog / Digital outputs
   pinMode(LED_S1_RED, OUTPUT);
   pinMode(LED_S1_GREEN, OUTPUT);
   pinMode(LED_S1_BLUE, OUTPUT);
@@ -121,6 +130,7 @@ void loop() {
     setMessageReceived(*pSensorNode);
   }
 
+  // - Update LED state (without using "delay()")
   const unsigned long currentTime = millis();
   processLeds(currentTime);
 }
