@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include <math.h>
 
-#include <printf.h>
-
 #include <RF24.h>
 #include <SPI.h>
 
@@ -21,7 +19,7 @@
 // - Number of sensors
 #define MAX_SENSORS 2
 
-// - Delay and blink count for the flashing led (message received)
+// - Delay and blink count for the blinking led (message received)
 #define LED_MSG_RECEIVED_BLINK_DELAY 75
 #define LED_MSG_RECEIVED_BLINK_COUNT 3
 // - Power coefficient for LEDS
@@ -32,25 +30,41 @@
 
 /////////
 
+// - Datastore for blinking led (message received)
 typedef struct {
+  // - Last 'off' state in ms
   unsigned long lastBlinkEnd;
+  // - How many more time the led has to blink
   unsigned short blinkLeft;
+  // - Is the led on ?
   bool active;
+  // - lED pin
   int pin;
 } LedStatus;
 
+// - Datastore for sensors
 typedef struct {
+  // - Address of the sensor
   uint8_t address;
+  // - Current measured value (in cm)
   int currentValue;
+  // - Lower value measured since power-on
   int minValue;
+  // - Higher value measured since power-on
   int maxValue;
+  // - Blinking led data
   LedStatus ledStatus;
+  // - Red LED pin
   int pinRed;
+  // - Green LED pin
   int pinGreen;
 } SensorNode;
 
+// - Message definition
 typedef struct {
+  // - Address of the device
   uint8_t address;
+  // - Value of the sensor in centimeters
   unsigned short value;
 } Message;
 
@@ -64,17 +78,20 @@ void processLedColor(unsigned long currentTime);
 
 //////////
 
+// - RF interface
 RF24 radio(7, 8);
-
-uint8_t gatewayAddress[] = { 0x00, 0xA1, 0xB2, 0xC3, 0xD4 };
-
-byte buffer[32];
-
+// - Sensor nodes datastores
 SensorNode sensorNodes[MAX_SENSORS];
 
+// - Gateway address
+uint8_t gatewayAddress[] = { 0x00, 0xA1, 0xB2, 0xC3, 0xD4 };
+
+// - Buffer to store received messages
+byte buffer[32];
+
 void setup() {
+  // - Serial init
   Serial.begin(115200);
-  printf_begin();
 
   // - Analog / Digital outputs
   pinMode(LED_S1_RED, OUTPUT);
@@ -84,7 +101,15 @@ void setup() {
   pinMode(LED_S2_GREEN, OUTPUT);
   pinMode(LED_S2_BLUE, OUTPUT);
 
-  // Setup and configure radio
+  // - Init sensors datastore
+  sensorNodes[0].ledStatus.pin = LED_S1_BLUE;
+  sensorNodes[0].pinRed = LED_S1_RED;
+  sensorNodes[0].pinGreen = LED_S1_GREEN;
+  sensorNodes[1].ledStatus.pin = LED_S2_BLUE;
+  sensorNodes[1].pinRed = LED_S2_RED;
+  sensorNodes[1].pinGreen = LED_S2_GREEN;
+
+  // - Setup and configure radio
   radio.begin();
   //radio.enableDynamicPayloads();
   radio.setPayloadSize(PAYLOAD_SIZE);
@@ -92,32 +117,26 @@ void setup() {
   radio.setPALevel(RF24_PA_HIGH);
   radio.setAutoAck(true);
 
+  // - Listen for messages
   radio.openReadingPipe(1, gatewayAddress);
   radio.startListening();
-
-  radio.printDetails();
-
-  sensorNodes[0].ledStatus.pin = LED_S1_BLUE;
-  sensorNodes[0].pinRed = LED_S1_RED;
-  sensorNodes[0].pinGreen = LED_S1_GREEN;
-  sensorNodes[1].ledStatus.pin = LED_S2_BLUE;
-  sensorNodes[1].pinRed = LED_S2_RED;
-  sensorNodes[1].pinGreen = LED_S2_GREEN;
 }
 
 void loop() {
   byte pipeNo;
   while(radio.available(&pipeNo)) {
     int payloadSize = radio.getDynamicPayloadSize();
-    if(payloadSize < 1) {
+    if(payloadSize < 1) { // - TODO : check if differs from the static payload size
       Serial.println("Corrupted payload");
       return;
     }
     radio.read( &buffer, sizeof(buffer) );
 
+    // - Message buffer to message mapping
     Message msg;
     msg = *(Message *)buffer;
 
+    // - Get which LED datastore should be edited, based on the message address
     SensorNode* pSensorNode = NULL;
     if(msg.address == 0x01) {
       pSensorNode = &sensorNodes[0];
@@ -125,8 +144,12 @@ void loop() {
       pSensorNode = &sensorNodes[1];
     } else {
       Serial.println("Address not known !!");
+      return;
     }
+
+    // - Save the value received
     saveValue(*pSensorNode, msg.value);
+    // - Update received status
     setMessageReceived(*pSensorNode);
   }
 
@@ -141,6 +164,7 @@ void processLeds(unsigned long currentTime) {
 }
 
 void processLedMessageReceived(unsigned long currentTime) {
+  // - Blinks the blue LED if necessary, without using "delay()"
   for(unsigned int i = 0; i < MAX_SENSORS; i++) {
     if(sensorNodes[i].ledStatus.blinkLeft > 0) {
       unsigned long cycleTime = currentTime - sensorNodes[i].ledStatus.lastBlinkEnd;
@@ -158,12 +182,14 @@ void processLedMessageReceived(unsigned long currentTime) {
 }
 
 void processLedColor(unsigned long currentTime) {
+  // - Update red / green LEDs to create a scale between the min and max value
   for(unsigned int i = 0; i < MAX_SENSORS; i++) {
     if(sensorNodes[i].currentValue != 0 && (sensorNodes[i].maxValue - sensorNodes[i].minValue) > 0) {
       int currentPercent = 100 * (sensorNodes[i].currentValue - sensorNodes[i].minValue) / (sensorNodes[i].maxValue - sensorNodes[i].minValue);
       int redValue = (255 * currentPercent) / 100;
       int greenValue = (255 * (100 - currentPercent)) / 100;
 
+      // - A LED COEFF is applied to avoid blindness after looking at the LEDs
       analogWrite(sensorNodes[i].pinRed, (int)round(redValue * LED_POWER_COEFF));
       analogWrite(sensorNodes[i].pinGreen, (int)round(greenValue * LED_POWER_COEFF));
     }
@@ -180,6 +206,7 @@ void saveValue(SensorNode &sensor, int value) {
   Serial.print(F("Got value "));
   Serial.println(value);
 
+  // - "0" is received when the sensor max distance is reached. Skipping...
   if(value == 0) {
     return;
   }
